@@ -1,23 +1,22 @@
-# Panduan Deploy ke Cloudflare Pages + Database Supabase
+# Panduan Deploy ke Cloudflare (Workers & Pages) + Database Supabase
 
-Project ini sekarang mendukung **dua mode deployment sekaligus** tanpa mengubah atau menghapus kode lama:
-- **Vercel / Node.js / VPS**: tetap menggunakan `api/index.ts`, `vercel.json`, `server.ts`, dan `src/server/*` (menggunakan `DATABASE_URL`).
-- **Cloudflare Pages**: menggunakan kode tambahan di folder `functions/` (`functions/api/[[path]].ts` & `functions/_lib/supabase.ts`) yang terhubung ke **Supabase melalui HTTPS PostgREST API** agar berjalan 100% native di Cloudflare Workers runtime.
+Project ini mendukung deployment ke **Cloudflare** dan **Vercel / Node.js** secara bersamaan tanpa mengubah atau menghapus kode lama (`server.ts`, `api/index.ts`, `vercel.json`, `src/server/*` tetap utuh 100%).
 
 ---
 
 ## 1. File Tambahan yang Dibuat
 
-1. `functions/api/[[path]].ts` — Handler Cloudflare Pages Functions untuk seluruh endpoint `/api/*`.
-2. `functions/_lib/supabase.ts` — Adapter database Supabase via HTTPS REST API (`SUPABASE_URL` & `SUPABASE_SERVICE_ROLE_KEY`).
-3. `wrangler.toml` — Konfigurasi build output Cloudflare Pages (`dist`).
+1. `functions/worker.ts` — Entrypoint Cloudflare Worker (mengirim `/api/*` ke API handler dan file statis `dist/` ke binding `ASSETS`).
+2. `functions/api/[[path]].ts` — Router seluruh endpoint `/api/*`.
+3. `functions/_lib/supabase.ts` — Adapter database Supabase via HTTPS PostgREST API (`SUPABASE_URL` & `SUPABASE_SERVICE_ROLE_KEY`).
+4. `wrangler.toml` — Konfigurasi Cloudflare Workers + Static Assets (`directory = "./dist"`).
 
 ---
 
 ## 2. Persiapan Database di Supabase
 
-1. Pastikan skema utama dari `supabase_schema.sql` sudah dijalankan di **Supabase Dashboard → SQL Editor → New Query → Run**.
-2. Jika tabel `pengajuan_izin` belum ada di Supabase Anda, jalankan SQL tambahan berikut di SQL Editor:
+1. Jalankan `supabase_schema.sql` di **Supabase Dashboard → SQL Editor → New Query → Run**.
+2. Jika tabel `pengajuan_izin` belum ada di Supabase Anda, jalankan SQL tambahan berikut:
 
 ```sql
 CREATE TABLE IF NOT EXISTS pengajuan_izin (
@@ -41,47 +40,34 @@ CREATE INDEX IF NOT EXISTS idx_pengajuan_nisn ON pengajuan_izin(nisn);
 CREATE INDEX IF NOT EXISTS idx_pengajuan_status ON pengajuan_izin(status);
 ```
 
-3. Ambil kredensial API Supabase Anda di **Supabase Dashboard → Project Settings → API**:
-   - **Project URL** (contoh: `https://abcdefghijklmno.supabase.co`)
-   - **Project API Keys → `service_role` (secret)**
-
-> **Catatan Keamanan**: `SUPABASE_SERVICE_ROLE_KEY` hanya dibaca di sisi server (`functions/` Cloudflare Pages Functions) dan **tidak pernah dikirim ke browser**.
+3. Ambil kredensial di **Supabase Dashboard → Project Settings → API**:
+   - **Project URL** (`https://PROJECT_REF.supabase.co`)
+   - **`service_role` secret key**
 
 ---
 
-## 3. Cara Deploy ke Cloudflare Pages
+## 3. Pengaturan Build & Environment Variables di Cloudflare
 
-1. Push seluruh kode (termasuk folder `functions/` dan `wrangler.toml`) ke repository GitHub Anda.
-2. Login ke **Cloudflare Dashboard** → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**.
-3. Pilih repository GitHub Anda, lalu isi **Build configuration**:
-   - **Framework preset**: `Vite` (atau `None`)
+Jika Anda membuat project di **Workers & Pages** (seperti `app-presensi-smp004` yang memakai **Build command** + `npx wrangler deploy`):
+
+1. Pastikan di **Settings → Build**:
    - **Build command**: `npm run build`
-   - **Build output directory**: `dist`
-4. Klik **Save and Deploy** (atau langsung tambahkan Environment Variables sebelum deploy).
-5. Buka menu **Settings → Environment variables** di project Cloudflare Pages Anda (tambahkan pada **Production** dan **Preview**):
+   - **Deploy command**: `npx wrangler deploy`
+2. Buka **Settings → Variables and Secrets** (di dashboard Worker Anda), lalu tambahkan:
    - `SUPABASE_URL` = `https://PROJECT_REF_ANDA.supabase.co`
-   - `SUPABASE_SERVICE_ROLE_KEY` = `eyJhbGciOi...` (key `service_role` dari Supabase)
-6. Lakukan **Retry deployment** (atau push commit baru) agar Environment Variables aktif pada Pages Functions.
+   - `SUPABASE_SERVICE_ROLE_KEY` = *(isi `service_role` key dari Supabase)*
+   *(Simpan sebagai Secret/Encrypted Variable agar aman).*
+3. Push perubahan terbaru (termasuk `wrangler.toml` dan folder `functions/`) ke GitHub, lalu klik **Retry build / Deploy** di Cloudflare.
+
+> **Catatan**: Jika nama project Cloudflare Anda berbeda dari `app-presensi-smp004`, ubah baris `name = "app-presensi-smp004"` di `wrangler.toml` agar sama dengan nama project Cloudflare Anda.
 
 ---
 
 ## 4. Uji Koneksi Setelah Deploy
 
-Buka URL berikut di browser:
+Buka di browser:
 ```text
-https://nama-project-anda.pages.dev/api/database/status
+https://NAMA-PROJECT-ANDA.workers.dev/api/database/status
 ```
 
-Jika konfigurasi benar, akan muncul respons JSON:
-```json
-{
-  "success": true,
-  "connected": true,
-  "provider": "Supabase PostgreSQL Cloud (Cloudflare Pages)",
-  "host": "PROJECT_REF_ANDA.supabase.co",
-  "database": "postgres (Supabase)",
-  "ssl": true,
-  "hasEnv": true,
-  "lastError": null
-}
-```
+Jika konfigurasi benar, respons JSON akan menampilkan `"connected": true`.
