@@ -10,6 +10,8 @@ export interface PagesEnv {
   SUPABASE_ANON_KEY?: string;
   SUPABASE_KEY?: string;
   VITE_SUPABASE_URL?: string;
+  TURSO_DATABASE_URL?: string;
+  TURSO_AUTH_TOKEN?: string;
 }
 
 export interface UserRecord {

@@ -9,6 +9,9 @@
 
 import * as XLSX from 'xlsx';
 import { SupabaseRestStorage, type PagesEnv } from '../_lib/supabase.ts';
+import { TursoStorage, hasTursoConfig } from '../_lib/turso.ts';
+
+type CloudStorage = SupabaseRestStorage | TursoStorage;
 
 interface PagesContext {
   request: Request;
@@ -101,7 +104,7 @@ function calculateTimeDiffMinutes(startTime: string, endTime: string) {
   return h2 * 60 + m2 - (h1 * 60 + m1);
 }
 
-async function checkHolidayStatus(dateStr: string, config: any, db: SupabaseRestStorage) {
+async function checkHolidayStatus(dateStr: string, config: any, db: CloudStorage) {
   const d = new Date(dateStr + 'T12:00:00+07:00');
   const jsDay = d.getDay();
   const dayKey = jsDay === 0 ? '7' : String(jsDay);
@@ -130,7 +133,7 @@ async function checkHolidayStatus(dateStr: string, config: any, db: SupabaseRest
   return { isHoliday: false, message: '' };
 }
 
-async function resolveAuth(request: Request, db: SupabaseRestStorage): Promise<AuthUser> {
+async function resolveAuth(request: Request, db: CloudStorage): Promise<AuthUser> {
   const authHeader = request.headers.get('authorization');
   const sessionTokenHeader = request.headers.get('x-session-token');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.split('Bearer ')[1] : sessionTokenHeader;
@@ -188,7 +191,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     });
   }
 
-  const db = new SupabaseRestStorage(env);
+  const useTurso = hasTursoConfig(env);
+  const db: CloudStorage = useTurso ? new TursoStorage(env) : new SupabaseRestStorage(env);
 
   try {
     // ------------------------------------------------------------------
@@ -198,8 +202,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       const status = await db.checkConnection();
       return jsonResponse({
         status: 'ok',
-        provider: 'cloudflare-pages',
-        database: 'supabase-rest',
+        provider: 'cloudflare-workers',
+        database: useTurso ? 'turso-http' : 'supabase-rest',
         db: status,
         timestamp: new Date().toISOString(),
       });
