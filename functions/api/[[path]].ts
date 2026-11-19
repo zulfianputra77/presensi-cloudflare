@@ -214,6 +214,24 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       return jsonResponse({ success: true, ...status });
     }
 
+    if ((method === 'GET' || method === 'POST') && path === '/turso/init') {
+      if (!(db instanceof TursoStorage)) {
+        return jsonResponse(
+          {
+            success: false,
+            message: 'TURSO_DATABASE_URL dan TURSO_AUTH_TOKEN belum terpasang di Cloudflare Environment Variables.',
+          },
+          400
+        );
+      }
+      const tables = await db.forceInitSchema();
+      return jsonResponse({
+        success: true,
+        message: 'Seluruh tabel Turso berhasil dibuat & siap digunakan.',
+        tables,
+      });
+    }
+
     // ------------------------------------------------------------------
     // 1. AUTENTIKASI & SESSION
     // ------------------------------------------------------------------

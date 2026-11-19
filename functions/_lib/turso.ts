@@ -107,6 +107,7 @@ function parseRows<T = Record<string, any>>(result: HranaExecuteResult): T[] {
 }
 
 let schemaInitializedForUrl: string | null = null;
+let schemaInitPromise: Promise<void> | null = null;
 
 export function hasTursoConfig(env: PagesEnv): boolean {
   return Boolean(normalizeTursoHttpUrl(env.TURSO_DATABASE_URL) && (env.TURSO_AUTH_TOKEN || '').trim());
@@ -188,8 +189,15 @@ export class TursoStorage {
     return result;
   }
 
-  private async ensureSchema(): Promise<void> {
-    if (!this.hasConfig() || schemaInitializedForUrl === this.baseUrl) return;
+  private async ensureSchema(force = false): Promise<void> {
+    if (!this.hasConfig()) return;
+    if (!force && schemaInitializedForUrl === this.baseUrl) return;
+    if (schemaInitPromise) {
+      await schemaInitPromise;
+      return;
+    }
+
+    schemaInitPromise = (async () => {
 
     await this.pipeline([
       {
@@ -369,6 +377,22 @@ export class TursoStorage {
     }
 
     schemaInitializedForUrl = this.baseUrl;
+    })();
+
+    try {
+      await schemaInitPromise;
+    } finally {
+      schemaInitPromise = null;
+    }
+  }
+
+  async forceInitSchema() {
+    schemaInitializedForUrl = null;
+    await this.ensureSchema(true);
+    const tables = await this.query<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name ASC"
+    );
+    return tables.map((t) => t.name);
   }
 
   async checkConnection() {
@@ -385,7 +409,7 @@ export class TursoStorage {
     }
 
     try {
-      await this.query('SELECT 1 as ok');
+      await this.query('SELECT COUNT(*) as total FROM konfigurasi');
       return {
         connected: true,
         provider: 'Turso libSQL Cloud (Cloudflare Workers)',
@@ -396,6 +420,7 @@ export class TursoStorage {
         lastError: null,
       };
     } catch (err: any) {
+      schemaInitializedForUrl = null;
       return {
         connected: false,
         provider: 'Turso libSQL Cloud (Cloudflare Workers)',
