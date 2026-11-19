@@ -1,0 +1,6 @@
+{
+  "name": "Sistem Absensi Sekolah QR & Barcode",
+  "description": "Aplikasi Presensi Digital Siswa dengan QR Code, Barcode Scanner MC26, Kiosk Mode, dan Database PostgreSQL Supabase.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
