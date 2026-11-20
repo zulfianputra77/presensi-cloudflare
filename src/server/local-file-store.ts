@@ -74,7 +74,8 @@ const DEFAULT_LOCAL_DATA: LocalDatabaseSchema = {
 };
 
 export function createLocalFileStorage(customDbPath?: string) {
-  const dbFilePath = path.resolve(customDbPath || process.env.LOCAL_DB_PATH || path.join(process.cwd(), 'data', 'absensi-local-db.json'));
+  const defaultDataDir = process.env.ABSENSI_DATA_DIR || path.join(process.cwd(), 'data');
+  const dbFilePath = path.resolve(customDbPath || process.env.LOCAL_DB_PATH || path.join(defaultDataDir, 'absensi-local-db.json'));
   const dbDir = path.dirname(dbFilePath);
 
   if (!fs.existsSync(dbDir)) {

@@ -107,3 +107,12 @@ Jika memakai mode Database Lokal Offline, seluruh data siswa, guru, absensi, sho
 data/absensi-local-db.json
 ```
 Untuk backup harian/bulanan, cukup salin (copy) file tersebut ke flashdisk atau Google Drive.
+
+---
+
+## 7. Memaketkan Menjadi Software Installer (`Setup.exe` seperti Dapodik / e-Rapor)
+
+Jika ingin mengemas seluruh aplikasi ini menjadi software installer Windows yang tinggal di-klik **Next > Install > Finish** (lengkap dengan ikon Desktop, auto-start Windows, dan runtime Node.js tertanam sehingga komputer target tidak perlu install Node.js), ikuti panduan lengkap di file:
+- **`PANDUAN_INSTALLER_SOFTWARE.md`**
+- Atau jalankan langsung **`build-installer.bat`** di Windows.
+

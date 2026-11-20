@@ -8,15 +8,21 @@ echo   SISTEM ABSENSI SEKOLAH - LOCALHOST BACKGROUND LAUNCHER
 echo ==============================================================
 echo.
 
+set "NODE_BIN=node"
+if exist "runtime\node.exe" set "NODE_BIN=runtime\node.exe"
+if exist "runtime\node.exe" goto CHECK_ENV
+
 where node >nul 2>nul
 if errorlevel 1 goto NODE_NOT_FOUND
 
+:CHECK_ENV
 if exist ".env" goto CHECK_DEPS
 if not exist ".env.localhost.example" goto CHECK_DEPS
 copy /y ".env.localhost.example" ".env" >nul
 echo [INFO] File .env dibuat otomatis dari .env.localhost.example
 
 :CHECK_DEPS
+if exist "dist-server\localhost-server.mjs" goto CHECK_BUILD
 if exist "node_modules\tsx\dist\cli.mjs" goto CHECK_BUILD
 echo [1/3] Menginstall seluruh komponen dependensi npm...
 call npm install
@@ -34,12 +40,12 @@ if errorlevel 1 goto BUILD_FAILED
 :START_DAEMON
 echo [3/3] Menyalakan server localhost di background...
 if "%~1"=="" goto START_DEFAULT_PORT
-node localhost-daemon.mjs start --port=%~1
+"%NODE_BIN%" localhost-daemon.mjs start --port=%~1
 if errorlevel 1 goto DAEMON_FAILED
 goto START_SUCCESS
 
 :START_DEFAULT_PORT
-node localhost-daemon.mjs start
+"%NODE_BIN%" localhost-daemon.mjs start
 if errorlevel 1 goto DAEMON_FAILED
 
 :START_SUCCESS

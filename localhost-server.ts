@@ -9,7 +9,7 @@
  *   PORT=8080 npx tsx localhost-server.ts
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'fs';
 import os from 'os';
@@ -22,6 +22,51 @@ import { TursoStorage, hasTursoConfig } from './functions/_lib/turso.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function resolveAppRoot(): string {
+  if (process.env.ABSENSI_APP_ROOT && fs.existsSync(process.env.ABSENSI_APP_ROOT)) {
+    return path.resolve(process.env.ABSENSI_APP_ROOT);
+  }
+  if (fs.existsSync(path.resolve(__dirname, 'package.json'))) {
+    return __dirname;
+  }
+  const parentDir = path.resolve(__dirname, '..');
+  if (fs.existsSync(path.resolve(parentDir, 'package.json'))) {
+    return parentDir;
+  }
+  return process.cwd();
+}
+
+function resolveWritableDataDir(appRoot: string): string {
+  if (process.env.ABSENSI_DATA_DIR) {
+    return path.resolve(process.env.ABSENSI_DATA_DIR);
+  }
+  const localDataDir = path.resolve(appRoot, 'data');
+  try {
+    if (!fs.existsSync(localDataDir)) {
+      fs.mkdirSync(localDataDir, { recursive: true });
+    }
+    const probe = path.join(localDataDir, `.write-test-${process.pid}`);
+    fs.writeFileSync(probe, 'ok', 'utf-8');
+    fs.unlinkSync(probe);
+    return localDataDir;
+  } catch {
+    const userBase = process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir();
+    const fallbackDir = path.join(userBase, 'AbsensiSekolah', 'data');
+    if (!fs.existsSync(fallbackDir)) {
+      fs.mkdirSync(fallbackDir, { recursive: true });
+    }
+    return fallbackDir;
+  }
+}
+
+const APP_ROOT = resolveAppRoot();
+const envPath = path.resolve(APP_ROOT, '.env');
+if (fs.existsSync(envPath)) {
+  dotenv.config({ path: envPath, quiet: true });
+} else {
+  dotenv.config({ quiet: true });
+}
 
 function resolvePort(): number {
   const cliPortArg = process.argv.find((arg) => arg.startsWith('--port='));
@@ -59,6 +104,10 @@ function getLanAddresses(): string[] {
 async function startLocalhostServer() {
   const PORT = resolvePort();
   const app = express();
+  const writableDataDir = resolveWritableDataDir(APP_ROOT);
+  if (!process.env.ABSENSI_DATA_DIR) {
+    process.env.ABSENSI_DATA_DIR = writableDataDir;
+  }
 
   // 1. Coba konek PostgreSQL lokal/cloud jika DATABASE_URL atau SQL_HOST diisi di .env
   await initStorage();
@@ -124,7 +173,8 @@ async function startLocalhostServer() {
       dbModeLabel = 'Turso Cloud (libSQL)';
     } else {
       // 3. Default Offline/Standalone: Database File Lokal Persisten di hardisk komputer!
-      const localStore = createLocalFileStorage(process.env.LOCAL_DB_PATH);
+      const localDbFile = process.env.LOCAL_DB_PATH || path.join(writableDataDir, 'absensi-local-db.json');
+      const localStore = createLocalFileStorage(localDbFile);
       Object.assign(storage, localStore);
       dbModeLabel = `Database Lokal Offline (${localStore.getFilePath()})`;
     }
@@ -146,7 +196,7 @@ async function startLocalhostServer() {
   });
 
   // Sajikan build produksi `dist/` jika sudah ada; jika belum, pakai Vite middleware otomatis
-  const distDir = path.resolve(__dirname, 'dist');
+  const distDir = path.resolve(APP_ROOT, 'dist');
   const distHtmlPath = path.resolve(distDir, 'index.html');
   const hasDist = fs.existsSync(distHtmlPath);
 
@@ -165,7 +215,7 @@ async function startLocalhostServer() {
 
     app.get('*', async (req, res, next) => {
       try {
-        const rootHtmlPath = path.resolve(__dirname, 'index.html');
+        const rootHtmlPath = path.resolve(APP_ROOT, 'index.html');
         if (fs.existsSync(rootHtmlPath)) {
           let template = fs.readFileSync(rootHtmlPath, 'utf-8');
           template = await vite.transformIndexHtml(req.originalUrl, template);

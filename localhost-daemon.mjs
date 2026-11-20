@@ -1,16 +1,17 @@
 /**
  * Localhost Background Daemon Manager
- * Menjalankan localhost-server.ts di background (tanpa jendela CMD tetap terbuka di Windows)
- * dan menyediakan perintah start / stop / status.
+ * Menjalankan server localhost di background (mendukung compiled dist-server/localhost-server.mjs
+ * maupun tsx localhost-server.ts, serta portable runtime/node.exe) dengan start / stop / status / port.
  *
  * Penggunaan:
  *   node localhost-daemon.mjs start [port]
- *   node localhost-daemon.mjs start --port=4040
+ *   node localhost-daemon.mjs start --port=4500
  *   node localhost-daemon.mjs stop
  *   node localhost-daemon.mjs status [port]
+ *   node localhost-daemon.mjs port
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import { spawn, execFileSync } from 'child_process';
 import fs from 'fs';
 import http from 'http';
@@ -21,11 +22,50 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.resolve(__dirname, 'data');
+const envPath = path.resolve(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  dotenv.config({ path: envPath, quiet: true });
+} else {
+  dotenv.config({ quiet: true });
+}
+
+function resolveWritableDataDir() {
+  if (process.env.ABSENSI_DATA_DIR) {
+    return path.resolve(process.env.ABSENSI_DATA_DIR);
+  }
+  const localDataDir = path.resolve(__dirname, 'data');
+  try {
+    if (!fs.existsSync(localDataDir)) {
+      fs.mkdirSync(localDataDir, { recursive: true });
+    }
+    const probe = path.join(localDataDir, `.write-test-${process.pid}`);
+    fs.writeFileSync(probe, 'ok', 'utf-8');
+    fs.unlinkSync(probe);
+    return localDataDir;
+  } catch {
+    const userBase = process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir();
+    const fallbackDir = path.join(userBase, 'AbsensiSekolah', 'data');
+    if (!fs.existsSync(fallbackDir)) {
+      fs.mkdirSync(fallbackDir, { recursive: true });
+    }
+    return fallbackDir;
+  }
+}
+
+const DATA_DIR = resolveWritableDataDir();
 const PID_FILE = path.resolve(DATA_DIR, 'localhost.pid');
 const LOG_FILE = path.resolve(DATA_DIR, 'localhost-server.log');
-const SERVER_ENTRY = path.resolve(__dirname, 'localhost-server.ts');
+const COMPILED_SERVER_ENTRY = path.resolve(__dirname, 'dist-server', 'localhost-server.mjs');
+const TS_SERVER_ENTRY = path.resolve(__dirname, 'localhost-server.ts');
 const TSX_CLI = path.resolve(__dirname, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+
+function resolveNodeExecutable() {
+  if (process.platform === 'win32') {
+    const bundled = path.resolve(__dirname, 'runtime', 'node.exe');
+    if (fs.existsSync(bundled)) return bundled;
+  }
+  return process.execPath;
+}
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -207,18 +247,24 @@ function printRunningInfo({ port, pid, dbProvider, alreadyRunning = false }) {
   console.log('');
 }
 
+function resolveSpawnArgs(requestedPort) {
+  if (fs.existsSync(COMPILED_SERVER_ENTRY)) {
+    return [COMPILED_SERVER_ENTRY, `--port=${requestedPort}`];
+  }
+  if (!fs.existsSync(TSX_CLI)) {
+    console.error(`[ERROR] Komponen tsx maupun dist-server belum ditemukan.`);
+    console.error('Jalankan "npm install" atau "npm run build:server" terlebih dahulu.');
+    process.exit(1);
+  }
+  if (!fs.existsSync(TS_SERVER_ENTRY)) {
+    console.error(`[ERROR] File server tidak ditemukan: ${TS_SERVER_ENTRY}`);
+    process.exit(1);
+  }
+  return [TSX_CLI, TS_SERVER_ENTRY, `--port=${requestedPort}`];
+}
+
 async function handleStart(args) {
   const requestedPort = resolvePort(args);
-
-  if (!fs.existsSync(TSX_CLI)) {
-    console.error(`[ERROR] Komponen tsx belum terpasang di: ${TSX_CLI}`);
-    console.error('Jalankan "npm install" terlebih dahulu.');
-    process.exit(1);
-  }
-  if (!fs.existsSync(SERVER_ENTRY)) {
-    console.error(`[ERROR] File server tidak ditemukan: ${SERVER_ENTRY}`);
-    process.exit(1);
-  }
 
   // Cek apakah sudah berjalan dari PID file
   const existing = readPidMeta();
@@ -254,7 +300,9 @@ async function handleStart(args) {
 
   ensureDataDir();
 
-  // Reset log jika lebih dari 2 MB agar tidak menumpuk
+  const spawnArgs = resolveSpawnArgs(requestedPort);
+  const nodeBin = resolveNodeExecutable();
+
   let logFlag = 'a';
   if (fs.existsSync(LOG_FILE)) {
     const st = fs.statSync(LOG_FILE);
@@ -273,12 +321,16 @@ async function handleStart(args) {
   let childExitCode = null;
   let spawnError = null;
 
-  const child = spawn(process.execPath, [TSX_CLI, SERVER_ENTRY, `--port=${requestedPort}`], {
+  const child = spawn(nodeBin, spawnArgs, {
     cwd: __dirname,
     detached: true,
     windowsHide: true,
     stdio: ['ignore', logFd, logFd],
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      ABSENSI_APP_ROOT: __dirname,
+      ABSENSI_DATA_DIR: DATA_DIR,
+    },
   });
 
   try {
@@ -299,7 +351,6 @@ async function handleStart(args) {
 
   child.unref();
 
-  // Tunggu sampai /api/health merespons 200 OK (maks 25 detik)
   const maxAttempts = 80;
   for (let i = 0; i < maxAttempts; i++) {
     if (childExited) {
@@ -324,6 +375,7 @@ async function handleStart(args) {
         port: requestedPort,
         startedAt: new Date().toISOString(),
         logFile: LOG_FILE,
+        dataDir: DATA_DIR,
       });
       printRunningInfo({
         port: requestedPort,
@@ -350,7 +402,7 @@ async function handleStart(args) {
 async function handleStop() {
   const meta = readPidMeta();
   if (!meta) {
-    console.log('[INFO] Tidak ditemukan proses background yang tercatat (data/localhost.pid kosong).');
+    console.log('[INFO] Tidak ditemukan proses background yang tercatat.');
     process.exit(0);
   }
 
@@ -411,6 +463,7 @@ async function handleStatus(args) {
     }
     console.log(`  PID Proses     : ${pidAlive ? meta.pid : 'Aktif (tanpa PID file)'}`);
     console.log(`  Database       : ${health.data?.db?.provider || '-'}`);
+    console.log(`  Folder Data    : ${DATA_DIR}`);
     console.log(`  File Log       : ${LOG_FILE}`);
   } else {
     if (meta && !pidAlive) {
@@ -418,11 +471,22 @@ async function handleStatus(args) {
     }
     console.log('  Status         : MATI (Tidak Berjalan)');
     console.log(`  Port Target    : ${port}`);
+    console.log(`  Folder Data    : ${DATA_DIR}`);
     console.log(`  File Log       : ${LOG_FILE}`);
   }
 
   console.log('==============================================================');
   console.log('');
+  process.exit(0);
+}
+
+function handlePort(args) {
+  const meta = readPidMeta();
+  if (meta && isPidAlive(meta.pid) && meta.port) {
+    console.log(String(meta.port));
+    process.exit(0);
+  }
+  console.log(String(resolvePort(args)));
   process.exit(0);
 }
 
@@ -434,7 +498,8 @@ if (command === 'start') {
   handleStop();
 } else if (command === 'status') {
   handleStatus(restArgs);
+} else if (command === 'port') {
+  handlePort(restArgs);
 } else {
-  // Jika argumen pertama langsung berupa angka port atau --port=..., perlakukan sebagai start
   handleStart([command, ...restArgs]);
 }

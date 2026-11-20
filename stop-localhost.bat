@@ -8,10 +8,15 @@ echo   MENGHENTIKAN SERVER LOCALHOST - SISTEM ABSENSI SEKOLAH
 echo ==============================================================
 echo.
 
+set "NODE_BIN=node"
+if exist "runtime\node.exe" set "NODE_BIN=runtime\node.exe"
+if exist "runtime\node.exe" goto STOP_NOW
+
 where node >nul 2>nul
 if errorlevel 1 goto NODE_NOT_FOUND
 
-node localhost-daemon.mjs stop
+:STOP_NOW
+"%NODE_BIN%" localhost-daemon.mjs stop
 echo.
 pause
 exit /b 0
